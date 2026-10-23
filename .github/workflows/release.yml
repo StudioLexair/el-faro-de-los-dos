@@ -70,16 +70,14 @@ jobs:
           path: ~/.pub-cache
           key: ${{ runner.os }}-pub-${{ env.FLUTTER_VERSION }}-${{ hashFiles('pubspec.lock') }}
       - name: Preparar herramientas de Android
-        run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager 'platforms;android-35' 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358' 'cmake;3.22.1' >/dev/null
+        run: bash scripts/setup-android.sh
       - run: flutter pub get
       - name: Recuperar firma desde secretos cifrados
         env:
           APK_KEYSTORE_BASE64: ${{ secrets.APK_KEYSTORE_BASE64 }}
           APK_KEYSTORE_PASSWORD: ${{ secrets.APK_KEYSTORE_PASSWORD }}
           APK_KEY_PASSWORD: ${{ secrets.APK_KEY_PASSWORD }}
-          APK_KEY_ALIAS: ${{ secrets.APK_KEY_ALIAS }}
+          APK_KEY_ALIAS: ${{ vars.APK_KEY_ALIAS }}
         run: |
           python3 - <<'PY'
           import os, base64
@@ -96,7 +94,7 @@ jobs:
           FARO_KEYSTORE_PATH: ${{ runner.temp }}/faro-release.p12
           FARO_KEYSTORE_PASSWORD: ${{ secrets.APK_KEYSTORE_PASSWORD }}
           FARO_KEY_PASSWORD: ${{ secrets.APK_KEY_PASSWORD }}
-          FARO_KEY_ALIAS: ${{ secrets.APK_KEY_ALIAS }}
+          FARO_KEY_ALIAS: ${{ vars.APK_KEY_ALIAS }}
         run: flutter build apk --release --target-platform android-arm,android-arm64
       - name: Verificar APK y preparar entrega
         run: |

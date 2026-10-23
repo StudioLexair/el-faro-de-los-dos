@@ -46,7 +46,7 @@ La firma privada y la credencial de despliegue están en **Settings → Secrets 
 | Secret | `APK_KEYSTORE_BASE64` | Almacén de firma PKCS12, codificado como base64 |
 | Secret | `APK_KEYSTORE_PASSWORD` | Contraseña del almacén |
 | Secret | `APK_KEY_PASSWORD` | Contraseña de la clave |
-| Secret | `APK_KEY_ALIAS` | Alias de firma |
+| Variable | `APK_KEY_ALIAS` | Alias de firma (identificador público, no contraseña) |
 | Secret | `VERCEL_TOKEN` | Publicar en el proyecto de Vercel |
 | Variable | `VERCEL_ORG_ID` | Equipo propietario del proyecto |
 | Variable | `VERCEL_PROJECT_ID` | Proyecto de Vercel |
