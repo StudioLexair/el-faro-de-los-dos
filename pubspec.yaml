@@ -1,0 +1,32 @@
+name: el_faro_de_los_dos
+description: Una aventura cooperativa y sin conexión para dos personas en un mismo móvil.
+publish_to: none
+version: 1.0.1+2
+
+environment:
+  sdk: '>=3.9.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  shared_preferences: ^2.5.3
+  cupertino_icons: ^1.0.9
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/art/
+    - assets/fonts/CormorantGaramond-OFL.txt
+    - assets/fonts/Manrope-OFL.txt
+  fonts:
+    - family: Cormorant
+      fonts:
+        - asset: assets/fonts/CormorantGaramond.ttf
+    - family: Manrope
+      fonts:
+        - asset: assets/fonts/Manrope.ttf

@@ -1,0 +1,177 @@
+name: Android · Pruebas, APK y web
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: faro-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: '3.47.8'
+  FLUTTER_REVISION: '737ba8f885dc774b53b442759999a312c9461e4e'
+  FLUTTER_HOME: /home/runner/.flutter-faro
+
+jobs:
+  verify:
+    name: 1 · Pruebas Flutter
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: /home/runner/.flutter-faro
+          key: ${{ runner.os }}-flutter-${{ env.FLUTTER_REVISION }}
+      - name: Preparar SDK fijado
+        run: bash scripts/setup-flutter.sh
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ env.FLUTTER_VERSION }}-${{ hashFiles('pubspec.lock') }}
+      - run: flutter pub get
+      - name: Formato, análisis y pruebas
+        run: |
+          dart format --output=none --set-exit-if-changed lib test
+          flutter analyze
+          flutter test --reporter expanded
+
+  android:
+    name: 2 · APK firmado para Android
+    if: github.event_name != 'pull_request'
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+          cache-dependency-path: |
+            **/*.gradle*
+            **/gradle-wrapper.properties
+            pubspec.lock
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: /home/runner/.flutter-faro
+          key: ${{ runner.os }}-flutter-${{ env.FLUTTER_REVISION }}
+      - name: Preparar SDK fijado
+        run: bash scripts/setup-flutter.sh
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ env.FLUTTER_VERSION }}-${{ hashFiles('pubspec.lock') }}
+      - name: Preparar herramientas de Android
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-35' 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358' 'cmake;3.22.1' >/dev/null
+      - run: flutter pub get
+      - name: Recuperar firma desde secretos cifrados
+        env:
+          APK_KEYSTORE_BASE64: ${{ secrets.APK_KEYSTORE_BASE64 }}
+          APK_KEYSTORE_PASSWORD: ${{ secrets.APK_KEYSTORE_PASSWORD }}
+          APK_KEY_PASSWORD: ${{ secrets.APK_KEY_PASSWORD }}
+          APK_KEY_ALIAS: ${{ secrets.APK_KEY_ALIAS }}
+        run: |
+          python3 - <<'PY'
+          import os, base64
+          from pathlib import Path
+          for key in ['APK_KEYSTORE_BASE64','APK_KEYSTORE_PASSWORD','APK_KEY_PASSWORD','APK_KEY_ALIAS']:
+              if not os.environ.get(key): raise SystemExit('Falta el secreto '+key)
+          target=Path(os.environ['RUNNER_TEMP'])/'faro-release.p12'
+          target.write_bytes(base64.b64decode(os.environ['APK_KEYSTORE_BASE64'],validate=True))
+          target.chmod(0o600)
+          PY
+      - name: Compilar APK release con firma estable
+        env:
+          FARO_REQUIRE_RELEASE_SIGNING: 'true'
+          FARO_KEYSTORE_PATH: ${{ runner.temp }}/faro-release.p12
+          FARO_KEYSTORE_PASSWORD: ${{ secrets.APK_KEYSTORE_PASSWORD }}
+          FARO_KEY_PASSWORD: ${{ secrets.APK_KEY_PASSWORD }}
+          FARO_KEY_ALIAS: ${{ secrets.APK_KEY_ALIAS }}
+        run: flutter build apk --release --target-platform android-arm,android-arm64
+      - name: Verificar APK y preparar entrega
+        run: |
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -E 'package:|sdkVersion|targetSdkVersion|native-code:'
+          PERMISSIONS=$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump permissions "$APK")
+          if echo "$PERMISSIONS" | grep -Eq 'android.permission.(INTERNET|CAMERA|RECORD_AUDIO|ACCESS_FINE_LOCATION)'; then
+            echo '::error::El APK tiene un permiso no permitido para esta aventura sin conexión.'
+            exit 1
+          fi
+          mkdir -p artifact
+          cp "$APK" artifact/El-Faro-de-los-Dos-Android.apk
+          (cd artifact && sha256sum El-Faro-de-los-Dos-Android.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-firmado
+          path: artifact/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Eliminar copia temporal de la firma
+        if: always()
+        run: rm -f "$RUNNER_TEMP/faro-release.p12"
+
+  publish:
+    name: 3 · Publicar descarga y web en Vercel
+    if: github.event_name != 'pull_request'
+    needs: android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: android-firmado
+          path: artifact
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Preparar web con el APK generado por Actions
+        run: |
+          (cd artifact && sha256sum -c SHA256SUMS.txt)
+          python3 scripts/prepare-site.py --apk artifact/El-Faro-de-los-Dos-Android.apk
+      - name: Publicar copia y checksum en GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(python3 -c "import json; print(json.load(open('.vercel/output/static/download.json'))['version'])")
+          TAG="v$VERSION"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "El Faro de los Dos $VERSION" --notes 'APK compilado, probado y firmado en GitHub Actions. La web oficial permite descargarlo directamente sin salir de la página. Android 7.0+, ARM de 32 y 64 bits.'
+          fi
+          gh release upload "$TAG" artifact/El-Faro-de-los-Dos-Android.apk artifact/SHA256SUMS.txt --clobber
+      - name: Publicar archivos ya compilados en Vercel
+        id: vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+          VERCEL_TELEMETRY_DISABLED: '1'
+        run: |
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          for k in ['VERCEL_TOKEN','VERCEL_ORG_ID','VERCEL_PROJECT_ID']:
+              if not os.environ.get(k):raise SystemExit('Falta la configuración '+k)
+          Path('.vercel/project.json').write_text(json.dumps({'orgId':os.environ['VERCEL_ORG_ID'],'projectId':os.environ['VERCEL_PROJECT_ID']}))
+          PY
+          npm install --global vercel@65.2.0 --no-audit --no-fund
+          vercel deploy --prebuilt --prod --yes --token "$VERCEL_TOKEN" > deployment-url.txt
+          URL=$(tail -n 1 deployment-url.txt)
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "### El faro está publicado" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Despliegue de producción: $URL" >> "$GITHUB_STEP_SUMMARY"
+          echo '- La web y el APK se publican juntos. El botón descarga desde el mismo dominio, sin pestañas ni redirecciones.' >> "$GITHUB_STEP_SUMMARY"
+          echo '- El APK oficial de esta ejecución está también en GitHub Releases y en los artefactos.' >> "$GITHUB_STEP_SUMMARY"

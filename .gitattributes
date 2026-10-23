@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.png binary
+*.webp binary
+*.ttf binary
+assets/fonts/*-OFL.txt whitespace=-trailing-space
+site/licenses/*-OFL.txt whitespace=-trailing-space
